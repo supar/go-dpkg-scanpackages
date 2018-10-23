@@ -122,8 +122,7 @@ func controlFile(file *os.File, buf io.Writer) (err error) {
 // fileSums returns MD5, SHA1, SHA256 checksums of the data
 func fileSums(file *os.File, mask uint8) (b []byte, err error) {
 	var (
-		wr io.Writer
-		hh = make([]hash.Hash, 0)
+		hh = make([]hash.Hash, 0, 3)
 	)
 
 	// create md5 writer
@@ -153,34 +152,69 @@ func fileSums(file *os.File, mask uint8) (b []byte, err error) {
 	}
 
 	// Create multiwriter and read file
-	wr = io.MultiWriter(ws...)
+	wr := io.MultiWriter(ws...)
 	if _, err = io.Copy(wr, file); err != nil {
 		return
 	}
 
 	// Read sums
-	b = make([]byte, 0)
+	b = make([]byte, 0, 256)
 	for i := len(hh) - 1; i >= 0; i-- {
-		l := hh[i].Size()
+		hexLen := hex.EncodedLen(hh[i].Size())
 
 		// grow slice
-		b = append(make([]byte, hex.EncodedLen(l)), append([]byte("\n"), b...)...)
+		b = unshift(b, []byte("\n"))
+		b = expandLeft(b, hexLen)
 		hex.Encode(b, hh[i].Sum(nil))
 
-		switch l {
-		case 16:
-			// MD5
-			b = append([]byte("MD5sum: "), b...)
-		case 20:
-			// SHA1
-			b = append([]byte("SHA1: "), b...)
+		switch hexLen {
 		case 32:
+			// MD5
+			b = unshift(b, []byte("MD5sum: "))
+		case 40:
+			// SHA1
+			b = unshift(b, []byte("SHA1: "))
+		case 64:
 			// SHA256
-			b = append([]byte("SHA256: "), b...)
+			b = unshift(b, []byte("SHA256: "))
 		}
+
 	}
 
 	return
+}
+
+// expandLeft expands slice to left
+func expandLeft(slice []byte, shift int) []byte {
+	l := len(slice)
+
+	// Capacity safe
+	// Slice is full; must grow.
+	// We double its size and add 1, so if the size is zero we still grow.
+	if cap(slice) <= l+shift {
+		newSlice := make([]byte, l, 2*l+shift+1)
+		copy(newSlice, slice)
+		slice = newSlice
+	}
+
+	slice = slice[:l+shift]
+
+	if l > 0 {
+		copy(slice[shift:], slice[:l])
+	}
+
+	return slice
+}
+
+// unshift inserts data to the begining
+func unshift(buf, data []byte) []byte {
+	l := len(data)
+
+	buf = expandLeft(buf, l)
+
+	copy(buf[:l], data)
+
+	return buf
 }
 
 // arFile reads file data from the debian archive
@@ -188,7 +222,6 @@ func arFile(file io.Reader, sFile string, cb fileCallback) (err error) {
 	var (
 		arReader *ar.Reader
 		header   *ar.Header
-		gz       *gzip.Reader
 	)
 
 	arReader = ar.NewReader(file)
@@ -204,6 +237,8 @@ func arFile(file io.Reader, sFile string, cb fileCallback) (err error) {
 
 		if strings.HasPrefix(header.Name, sFile) {
 			if strings.HasSuffix(header.Name, "gz") {
+				var gz *gzip.Reader
+
 				if gz, err = gzip.NewReader(arReader); err != nil {
 					return
 				}
