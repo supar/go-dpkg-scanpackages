@@ -236,7 +236,7 @@ func arFile(file io.Reader, sFile string, cb fileCallback) (err error) {
 		}
 
 		if strings.HasPrefix(header.Name, sFile) {
-			if strings.HasSuffix(header.Name, "gz") {
+			if strings.HasSuffix(sFile, ".gz") {
 				var gz *gzip.Reader
 
 				if gz, err = gzip.NewReader(arReader); err != nil {
